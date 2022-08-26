@@ -51,6 +51,7 @@ def parse_args():
 
 
 def build_word_dict(pickle_path):
+    print("==========================>>-----In the ----sample--->>---build_word_dict---- function")
     with open(pickle_path, 'rb') as f:
         x = pickle.load(f)
         wordtoix = x[3]
@@ -61,6 +62,7 @@ def build_word_dict(pickle_path):
 
 
 def sample_example(wordtoix, netG, text_encoder, args):
+    print("==========================>>-----In the---- sample---->>---sample_example---- function")
     batch_size, device = args.imgs_per_sent, args.device
     text_filepath, img_save_path = args.example_captions, args.samples_save_dir
     truncation, trunc_rate = args.truncation, args.trunc_rate
@@ -86,6 +88,7 @@ def sample_example(wordtoix, netG, text_encoder, args):
 
 
 def main(args):
+    print("==========================>>-----In the---- sample---->>---main---- function")
     time_stamp = get_time_stamp()
     args.samples_save_dir = osp.join(args.samples_save_dir, time_stamp)
     if (args.multi_gpus==True) and (get_rank() != 0):
@@ -96,6 +99,7 @@ def main(args):
     pickle_path = os.path.join(args.data_dir, 'captions_DAMSM.pickle')
     args.vocab_size, wordtoix = build_word_dict(pickle_path)
     # prepare models
+    print('------------------>>---',args)
     _, text_encoder, netG, _, _ = prepare_models(args)
     model_path = osp.join(ROOT_PATH, args.checkpoint)
     netG = load_netG(netG, model_path, args.multi_gpus, train=False)
