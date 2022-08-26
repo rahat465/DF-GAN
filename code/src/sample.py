@@ -108,6 +108,7 @@ def main(args):
         None
     else:
         print('Load %s for NetG'%(args.checkpoint))
+        #it is loading df GAN
         print("************ Start sampling ************")
     start_t = time.time()
     sample_example(wordtoix, netG, text_encoder, args)
