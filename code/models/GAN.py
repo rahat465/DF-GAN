@@ -74,7 +74,8 @@ class NetC(nn.Module):
 class G_Block(nn.Module):
     def __init__(self, cond_dim, in_ch, out_ch, upsample):
         super(G_Block, self).__init__()
-        self.upsample = upsample
+        print("------arguments passed to the g_block--cond_dim in_ch out_ch upsample", cond_dim, in_ch, out_ch, upsample)
+        self.upsample = upsamplecond_dim, in_ch, out_ch, upsample
         self.learnable_sc = in_ch != out_ch 
         self.c1 = nn.Conv2d(in_ch, out_ch, 3, 1, 1)
         self.c2 = nn.Conv2d(out_ch, out_ch, 3, 1, 1)
