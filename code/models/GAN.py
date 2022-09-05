@@ -3,12 +3,15 @@ import torch.nn as nn
 import numpy as np
 import torch.nn.functional as F
 from collections import OrderedDict
+from attention import SpatialAttention as SPATIAL_NET  #added for attention
+from attention import ChannelAttention as CHANNEL_NET  #dded for attention
 
 
 class NetG(nn.Module):
     def __init__(self, ngf, nz, cond_dim, imsize, ch_size):
         super(NetG, self).__init__()
         self.ngf = ngf
+        self.ef = cond_dim #new added
         # input noise (batch_size, 100)
         self.fc = nn.Linear(nz, ngf*8*4*4)
         # build GBlocks
@@ -23,13 +26,20 @@ class NetG(nn.Module):
             nn.Tanh(),
             )
 
-    def forward(self, noise, c): # x=noise, c=ent_emb
+    def forward(self, noise, c, mask): # x=noise, c=ent_emb mask new added
         # concat noise and sentence
         out = self.fc(noise)
         out = out.view(noise.size(0), 8*self.ngf, 4, 4)
         cond = torch.cat((noise, c), dim=1)
+        
         #here v can add attention to c its effect on the image quality
-        # fuse text and visual features
+       
+        self.att = SPATIAL_NET(ngf, self.ef_dim)  #new added
+        self.channel_att = CHANNEL_NET(ngf, self.ef_dim) #new added
+        
+         self.att.applyMask(mask)
+            
+         # fuse text and visual features
         for GBlock in self.GBlocks:
             out = GBlock(out, cond)
         # convert to RGB image
