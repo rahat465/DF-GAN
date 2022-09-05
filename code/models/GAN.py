@@ -28,6 +28,7 @@ class NetG(nn.Module):
         out = self.fc(noise)
         out = out.view(noise.size(0), 8*self.ngf, 4, 4)
         cond = torch.cat((noise, c), dim=1)
+        #here v can add attention to c its effect on the image quality
         # fuse text and visual features
         for GBlock in self.GBlocks:
             out = GBlock(out, cond)
