@@ -97,7 +97,28 @@ def get_imgs(img_path, bbox=None, transform=None, normalize=None):
     if normalize is not None:
         img = normalize(img)
     return img
-
+###############################################################
+              # new
+    ########################################################
+def prepare_labels(self):
+    batch_size = self.batch_size
+    real_labels = Variable(torch.FloatTensor(batch_size).fill_(1))
+    fake_labels = Variable(torch.FloatTensor(batch_size).fill_(0))
+    match_labels = Variable(torch.LongTensor(range(batch_size)))
+    if cfg.CUDA:
+        real_labels = real_labels.cuda()
+        fake_labels = fake_labels.cuda()
+        match_labels = match_labels.cuda()
+        return real_labels, fake_labels, match_labels
+    
+ def prepare_data(data, text_encoder):
+    imgs, captions, caption_lens, keys = data
+    captions, sorted_cap_lens, sorted_cap_idxs = sort_sents(captions, caption_lens)
+    sent_emb, words_embs = encode_tokens(text_encoder, captions, sorted_cap_lens)
+    sent_emb = rm_sort(sent_emb, sorted_cap_idxs)
+    words_embs = rm_sort(words_embs, sorted_cap_idxs)
+    imgs = Variable(imgs).cuda()
+    return imgs, sent_emb, words_embs, keys
 ################################################################
 #                    Dataset
 ################################################################
