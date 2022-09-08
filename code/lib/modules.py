@@ -84,7 +84,62 @@ def train(dataloader, netG, netD, netC, text_encoder, optimizerG, optimizerD, ar
         None
     else:
         loop.close()
-
+################################################################################################################
+def train_new(dataloader, netG, netD, netC, text_encoder, optimizerG, optimizerD, args):
+    batch_size = args.batch_size
+    device = args.device
+    epoch = args.current_epoch
+    max_epoch = args.max_epoch
+    z_dim = args.z_dim
+    netG, netD, netC = netG.train(), netD.train(), netC.train()
+    if (args.multi_gpus==True) and (get_rank() != 0):
+        None
+    else:
+        loop = tqdm(total=len(dataloader))
+    for step, data in enumerate(dataloader, 0):
+        # prepare_data
+        imgs, sent_emb, words_embs, keys = prepare_data(data, text_encoder)
+        imgs = imgs.to(device).requires_grad_()
+        sent_emb = sent_emb.to(device).requires_grad_()
+        words_embs = words_embs.to(device).requires_grad_()
+        # predict real
+        real_features = netD(imgs)
+        pred_real, errD_real = predict_loss(netC, real_features, sent_emb, negtive=False)
+        mis_features = torch.cat((real_features[1:], real_features[0:1]), dim=0)
+        _, errD_mis = predict_loss(netC, mis_features, sent_emb, negtive=True)
+        # synthesize fake images
+        noise = torch.randn(batch_size, z_dim).to(device)
+        fake = netG(noise, sent_emb)
+        fake_features = netD(fake.detach())
+        _, errD_fake = predict_loss(netC, fake_features, sent_emb, negtive=True)
+        # MA-GP
+        errD_MAGP = MA_GP(imgs, sent_emb, pred_real)
+        # whole D loss
+        errD = errD_real + (errD_fake + errD_mis)/2.0 + errD_MAGP
+        # update D
+        optimizerD.zero_grad()
+        errD.backward()
+        optimizerD.step()
+        # update G
+        fake_features = netD(fake)
+        output = netC(fake_features, sent_emb)
+        # sim = MAP(image_encoder, fake, sent_emb).mean()
+        errG = -output.mean()# - sim
+        optimizerG.zero_grad()
+        errG.backward()
+        optimizerG.step()
+        # update loop information
+        if (args.multi_gpus==True) and (get_rank() != 0):
+            None
+        else:
+            loop.update(1)
+            loop.set_description(f'Training Epoch [{epoch}/{max_epoch}]')
+            loop.set_postfix()
+    if (args.multi_gpus==True) and (get_rank() != 0):
+        None
+    else:
+        loop.close()
+########################################################################################################################################
 
 def sample(dataloader, netG, text_encoder, save_dir, device, multi_gpus, z_dim, stamp, truncation, trunc_rate):
     for step, data in enumerate(dataloader, 0):
