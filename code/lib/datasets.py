@@ -348,7 +348,13 @@ class TextImgDataset(data.Dataset):
         sent_ix = random.randint(0, self.embeddings_num)
         new_sent_ix = index * self.embeddings_num + sent_ix
         caps, cap_len = self.get_caption(new_sent_ix)
-        return imgs, caps, cap_len, key
+        # slect the 2nd sentence
+               
+        sent_ix = random.randint(0, self.embeddings_num)
+        new_sent_ix = index * self.embeddings_num + sent_ix
+        caps_two, cap_len_two = self.get_caption(new_sent_ix)
+        
+        return imgs, caps, cap_len, key, caps_two, cap_len_two 
 
     def __len__(self):
         return len(self.filenames)
