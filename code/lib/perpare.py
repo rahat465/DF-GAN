@@ -8,6 +8,7 @@ import numpy as np
 from PIL import Image
 from tqdm import tqdm, trange
 
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -20,8 +21,9 @@ from torch.utils.data import DataLoader, random_split
 from torch.utils.data.distributed import DistributedSampler
 
 from lib.utils import mkdir_p, get_rank, load_model_weights
-from models.DAMSM import RNN_ENCODER, CNN_ENCODER
+from models.DAMSM import RNN_ENCODER, CNN_ENCODER, BERT_RNN_ENCODER
 from models.GAN import NetG, NetD, NetC
+
 
 ###########   preparation   ############
 def prepare_models(args):
@@ -40,9 +42,52 @@ def prepare_models(args):
         p.requires_grad = False
     image_encoder.eval()
     # text encoder
-    text_encoder = RNN_ENCODER(n_words, nhidden=args.TEXT.EMBEDDING_DIM)
+    text_encoder = RNN_ENCODER(n_words, nhidden=args.TEXT.EMBEDDING_DIM) 
     state_dict = torch.load(args.TEXT.DAMSM_NAME, map_location='cpu')
     text_encoder = load_model_weights(text_encoder, state_dict, multi_gpus=False)
+    text_encoder.cuda()
+    for p in text_encoder.parameters():
+        p.requires_grad = False
+    text_encoder.eval()
+    # GAN models
+    netG = NetG(args.nf, args.z_dim, args.cond_dim, args.imsize, args.ch_size).to(device)
+    netD = NetD(args.nf, args.imsize, args.ch_size).to(device)
+    netC = NetC(args.nf, args.cond_dim).to(device)
+    if (args.multi_gpus) and (args.train):
+        print("Let's use", torch.cuda.device_count(), "GPUs!")
+        netG = torch.nn.parallel.DistributedDataParallel(netG, broadcast_buffers=False,
+                                                          device_ids=[local_rank],
+                                                          output_device=local_rank, find_unused_parameters=True)
+        netD = torch.nn.parallel.DistributedDataParallel(netD, broadcast_buffers=False,
+                                                          device_ids=[local_rank],
+                                                          output_device=local_rank, find_unused_parameters=True)
+        netC = torch.nn.parallel.DistributedDataParallel(netC, broadcast_buffers=False,
+                                                          device_ids=[local_rank],
+                                                          output_device=local_rank, find_unused_parameters=True)
+    return image_encoder, text_encoder, netG, netD, netC
+
+
+
+# function changed by me
+def prepare_models_new(args):
+    device = args.device
+    local_rank = args.local_rank
+    n_words = args.vocab_size
+    multi_gpus = args.multi_gpus
+    # image encoder
+    image_encoder = CNN_ENCODER(args.TEXT.EMBEDDING_DIM)
+    img_encoder_path = args.TEXT.DAMSM_NAME.replace('text_encoder', 'image_encoder')
+    state_dict = torch.load(img_encoder_path, map_location='cpu')
+    image_encoder = load_model_weights(image_encoder, state_dict, multi_gpus=False)
+    # image_encoder.load_state_dict(state_dict)
+    image_encoder.to(device)
+    for p in image_encoder.parameters():
+        p.requires_grad = False
+    image_encoder.eval()
+    # text encoder I will change it to bert encoder
+    text_encoder = BERT_RNN_ENCODER(n_words, nhidden=args.TEXT.EMBEDDING_DIM)
+    #state_dict = torch.load(args.TEXT.DAMSM_NAME, map_location='cpu')------commented by me------
+    #text_encoder = load_model_weights(text_encoder, state_dict, multi_gpus=False)------commented by me------
     text_encoder.cuda()
     for p in text_encoder.parameters():
         p.requires_grad = False
