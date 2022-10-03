@@ -16,9 +16,11 @@ ROOT_PATH = osp.abspath(osp.join(osp.dirname(osp.abspath(__file__)),  ".."))
 sys.path.insert(0, ROOT_PATH)
 from lib.utils import mkdir_p,get_rank,merge_args_yaml,get_time_stamp,save_args
 from lib.utils import load_model_opt,save_models,load_npz, params_count
-from lib.perpare import prepare_dataloaders,prepare_models
+from lib.perpare import prepare_dataloaders,prepare_models, prepare_models_new
 from lib.modules import sample_one_batch as sample, test as test, train as train
 from lib.datasets import get_fix_data
+
+
 
 
 def parse_args():
@@ -32,12 +34,14 @@ def parse_args():
                         help='the stamp of model')
     parser.add_argument('--imsize', type=int, default=256,
                         help='input imsize')
-    parser.add_argument('--batch_size', type=int, default=32,
+    parser.add_argument('--batch_size', type=int, default=15,
                         help='batch size')
     parser.add_argument('--train', type=bool, default=True,
                         help='if train model')
-    parser.add_argument('--resume_epoch', type=int, default=1,
+    parser.add_argument('--resume_epoch', type=int, default=930,
                         help='resume epoch')
+    parser.add_argument('--resume_train', type=bool, default=True,
+                        help='resume_train')                   
     parser.add_argument('--resume_model_path', type=str, default='model',
                         help='the model for resume training')
     parser.add_argument('--multi_gpus', type=bool, default=False,
@@ -72,8 +76,12 @@ def main(args):
     # prepare dataloader, models, data
     train_dl, valid_dl ,train_ds, valid_ds, sampler = prepare_dataloaders(args)
     args.vocab_size = train_ds.n_words
-    image_encoder, text_encoder, netG, netD, netC = prepare_models(args)
+    # to test bert encoder in training im commenting a line of code
+    #image_encoder, text_encoder, netG, netD, netC = prepare_models(args)
+    image_encoder, text_encoder, netG, netD, netC = prepare_models_new(args)
     fixed_img, fixed_sent, fixed_z = get_fix_data(train_dl, valid_dl, text_encoder, args)
+
+
     if (args.multi_gpus==True) and (get_rank() != 0):
         None
     else:
@@ -82,17 +90,25 @@ def main(args):
         img_name = 'z.png'
         img_save_path = osp.join(args.img_save_dir, img_name)
         vutils.save_image(fixed_img.data, img_save_path, nrow=8, normalize=True)
+
+
     # prepare optimizer
     optimizerG = torch.optim.Adam(netG.parameters(), lr=0.0001, betas=(0.0, 0.9))
     D_params = list(netD.parameters()) + list(netC.parameters())
     optimizerD = torch.optim.Adam(D_params, lr=0.0004, betas=(0.0, 0.9))
     m1, s1 = load_npz(args.npz_path)
     # load from checkpoint
-    strat_epoch = 1
-    if args.resume_epoch!=1:
+    # --------resume_train added by me to by pass loading in first epoche-------
+    if args.resume_train == True:
+      print("-------in the resume training if")
+      strat_epoch = 1
+      if args.resume_epoch!=1:
         strat_epoch = args.resume_epoch+1
         path = osp.join(args.resume_model_path, 'state_epoch_%03d.pth'%(args.resume_epoch))
         netG, netD, netC, optimizerG, optimizerD = load_model_opt(netG, netD, netC, optimizerG, optimizerD, path, args.multi_gpus)
+    else:
+      print("---------in the else of resume training")
+      strat_epoch = 1
     # print args
     if (args.multi_gpus==True) and (get_rank() != 0):
         None
@@ -104,6 +120,8 @@ def main(args):
     # Start training
     test_interval,gen_interval,save_interval = args.test_interval,args.gen_interval,args.save_interval
     #torch.cuda.empty_cache()
+    #    added to handle labels of contrastive loss
+ 
     for epoch in range(strat_epoch, args.max_epoch, 1):
         if (args.multi_gpus==True):
             sampler.set_epoch(epoch)
@@ -111,7 +129,8 @@ def main(args):
         # training
         args.current_epoch = epoch
         torch.cuda.empty_cache()
-        train(train_dl, netG, netD, netC, text_encoder, optimizerG, optimizerD, args)
+        print("--------in the for loop of starting trg")
+        train(train_dl, netG, netD, netC, text_encoder, optimizerG, optimizerD, args,image_encoder)
         #torch.cuda.empty_cache()
         # save
         if epoch%save_interval==0:
