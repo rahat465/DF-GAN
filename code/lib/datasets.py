@@ -20,11 +20,12 @@ else:
     import pickle
 
 from .utils import truncated_noise
+import copy
 
 
 def get_one_batch_data(dataloader, text_encoder, args):
     data = next(iter(dataloader))
-    imgs, sent_emb, words_embs, keys = prepare_data(data, text_encoder)
+    imgs, imgs_2, sent_emb, words_embs, keys,sent_emb_2,words_embs_2,sorted_cap_idxs,sorted_cap_indices_2 = prepare_data(data, text_encoder)#added ,sorted_cap_idxs,sorted_cap_indices_2
     return imgs, words_embs, sent_emb
 
 
@@ -42,22 +43,37 @@ def get_fix_data(train_dl, test_dl, text_encoder, args):
 
 
 def prepare_data(data, text_encoder):
-    imgs, captions, caption_lens, keys = data
-    captions, sorted_cap_lens, sorted_cap_idxs = sort_sents(captions, caption_lens)
+    #imgs, captions, caption_lens, keys = data  -----commented for contrastive loss
+    #2nd sentence added for contrastive loss
+    imgs, captions, caption_lens, keys,captions_2,caption_lens_2 = data
+    print("-------------captions--", captions.shape)
+    #captions, sorted_cap_lens, sorted_cap_idxs = sort_sents(captions, caption_lens) -----commented for contrastive loss
+    captions, sorted_cap_lens, sorted_cap_idxs,captions_2,sorted_cap_lens_2,sorted_cap_indices_2  = sort_sents(captions, caption_lens, captions_2,caption_lens_2)
     sent_emb, words_embs = encode_tokens(text_encoder, captions, sorted_cap_lens)
     sent_emb = rm_sort(sent_emb, sorted_cap_idxs)
     words_embs = rm_sort(words_embs, sorted_cap_idxs)
+    # added to get embedding of the 2nd sentence
+    sent_emb_2, words_embs_2 = encode_tokens(text_encoder, captions_2, sorted_cap_lens_2)
+    sent_emb_2 = rm_sort(sent_emb_2, sorted_cap_indices_2)
+    words_embs_2 = rm_sort(words_embs_2, sorted_cap_indices_2)
     imgs = Variable(imgs).cuda()
-    return imgs, sent_emb, words_embs, keys
+    #imgs_2 = imgs.copy()
+    imgs_2 = copy.deepcopy(imgs)
+    return imgs, imgs_2, sent_emb, words_embs, keys,sent_emb_2,words_embs_2,sorted_cap_idxs,sorted_cap_indices_2 
+     
 
 
-def sort_sents(captions, caption_lens):
+def sort_sents(captions, caption_lens ,captions_2,caption_lens_2):
     # sort data by the length in a decreasing order
     sorted_cap_lens, sorted_cap_indices = torch.sort(caption_lens, 0, True)
+    sorted_cap_lens_2, sorted_cap_indices_2 = torch.sort(caption_lens_2, 0, True)
     captions = captions[sorted_cap_indices].squeeze()
+    captions_2 = captions_2[sorted_cap_indices_2].squeeze()
     captions = Variable(captions).cuda()
+    captions_2 = Variable(captions_2).cuda()
     sorted_cap_lens = Variable(sorted_cap_lens).cuda()
-    return captions, sorted_cap_lens, sorted_cap_indices
+    sorted_cap_lens_2 = Variable(sorted_cap_lens_2).cuda()
+    return captions, sorted_cap_lens, sorted_cap_indices,captions_2,sorted_cap_lens_2,sorted_cap_indices_2 
 
 
 def encode_tokens(text_encoder, caption, cap_lens):
@@ -97,28 +113,7 @@ def get_imgs(img_path, bbox=None, transform=None, normalize=None):
     if normalize is not None:
         img = normalize(img)
     return img
-###############################################################
-              # new
-    ########################################################
-def prepare_labels(self):
-    batch_size = self.batch_size
-    real_labels = Variable(torch.FloatTensor(batch_size).fill_(1))
-    fake_labels = Variable(torch.FloatTensor(batch_size).fill_(0))
-    match_labels = Variable(torch.LongTensor(range(batch_size)))
-    if cfg.CUDA:
-        real_labels = real_labels.cuda()
-        fake_labels = fake_labels.cuda()
-        match_labels = match_labels.cuda()
-        return real_labels, fake_labels, match_labels
-    
- def prepare_data(data, text_encoder):
-    imgs, captions, caption_lens, keys = data
-    captions, sorted_cap_lens, sorted_cap_idxs = sort_sents(captions, caption_lens)
-    sent_emb, words_embs = encode_tokens(text_encoder, captions, sorted_cap_lens)
-    sent_emb = rm_sort(sent_emb, sorted_cap_idxs)
-    words_embs = rm_sort(words_embs, sorted_cap_idxs)
-    imgs = Variable(imgs).cuda()
-    return imgs, sent_emb, words_embs, keys
+
 ################################################################
 #                    Dataset
 ################################################################
@@ -348,13 +343,12 @@ class TextImgDataset(data.Dataset):
         sent_ix = random.randint(0, self.embeddings_num)
         new_sent_ix = index * self.embeddings_num + sent_ix
         caps, cap_len = self.get_caption(new_sent_ix)
-        # slect the 2nd sentence
-               
+
+        # select the 2nd sentence
         sent_ix = random.randint(0, self.embeddings_num)
         new_sent_ix = index * self.embeddings_num + sent_ix
         caps_two, cap_len_two = self.get_caption(new_sent_ix)
-        
-        return imgs, caps, cap_len, key, caps_two, cap_len_two 
+        return imgs, caps, cap_len, key, caps_two, cap_len_two
 
     def __len__(self):
         return len(self.filenames)
