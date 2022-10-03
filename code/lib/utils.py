@@ -60,7 +60,7 @@ def get_time_stamp():
 
 def load_yaml(filename):
     with open(filename, 'r') as f:
-        cfg = edict(yaml.load(f, Loader=yaml.FullLoader))
+        cfg = edict(yaml.load(f, Loader=yaml.Loader))
     return cfg
 
 
@@ -95,6 +95,7 @@ def load_opt_weights(optimizer, weights):
 
 
 def load_model_opt(netG, netD, netC, optim_G, optim_D, path, multi_gpus):
+    print("Load model_opt function is called multi gpu")
     checkpoint = torch.load(path, map_location=torch.device('cpu'))
     netG = load_model_weights(netG, checkpoint['model']['netG'], multi_gpus)
     netD = load_model_weights(netD, checkpoint['model']['netD'], multi_gpus)
@@ -105,6 +106,7 @@ def load_model_opt(netG, netD, netC, optim_G, optim_D, path, multi_gpus):
 
 
 def load_models(netG, netD, netC, path):
+    print("Load models function is called----")
     checkpoint = torch.load(path, map_location=torch.device('cpu'))
     netG = load_model_weights(netG, checkpoint['model']['netG'])
     netD = load_model_weights(netD, checkpoint['model']['netD'])
@@ -119,6 +121,7 @@ def load_netG(netG, path, multi_gpus, train):
 
 
 def load_model_weights(model, weights, multi_gpus, train=True):
+    print("Load model weights function is called----")
     if list(weights.keys())[0].find('module')==-1:
         pretrained_with_multi_gpu = False
     else:
@@ -182,6 +185,7 @@ def tokenize(wordtoix, text_filepath):
                 continue
             sent = sent.replace("\ufffd\ufffd", " ")
             tokens = tokenizer.tokenize(sent.lower())
+            print('--------------tokens generated are', tokens)
             if len(tokens) == 0:
                 print('sent', sent)
                 continue
