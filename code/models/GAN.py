@@ -3,49 +3,71 @@ import torch.nn as nn
 import numpy as np
 import torch.nn.functional as F
 from collections import OrderedDict
-from attention import SpatialAttention as SPATIAL_NET  #added for attention
-from attention import ChannelAttention as CHANNEL_NET  #dded for attention
 
+from easydict import EasyDict as edict
+
+__C = edict()
+cfg = __C
+
+
+# Modal options
+__C.GAN = edict()
+__C.GAN.DF_DIM = 64
+__C.GAN.GF_DIM = 128
+__C.GAN.Z_DIM = 100
+__C.GAN.CONDITION_DIM = 100
+__C.GAN.R_NUM = 2
+__C.GAN.B_ATTENTION = True
+__C.GAN.B_DCGAN = False
+
+
+__C.TEXT = edict()
+__C.TEXT.CAPTIONS_PER_IMAGE = 10
+__C.TEXT.EMBEDDING_DIM = 256
+__C.TEXT.WORDS_NUM = 18
 
 class NetG(nn.Module):
     def __init__(self, ngf, nz, cond_dim, imsize, ch_size):
         super(NetG, self).__init__()
         self.ngf = ngf
-        self.ef = cond_dim #new added
+        print("------value in ngf is ----->>",ngf)
+        print("------value in cond_dim is ----->>",cond_dim)
         # input noise (batch_size, 100)
         self.fc = nn.Linear(nz, ngf*8*4*4)
         # build GBlocks
         self.GBlocks = nn.ModuleList([])
+        print("-------get g in out chs----passed", imsize)
         in_out_pairs = get_G_in_out_chs(ngf, imsize)
+        print("-------in_out_pairs",in_out_pairs)
+        print("-------nz value ", nz)
+        print("-------ch_size",ch_size)
         for idx, (in_ch, out_ch) in enumerate(in_out_pairs):
             self.GBlocks.append(G_Block(cond_dim+nz, in_ch, out_ch, upsample=True))
+            
         # to RGB image
+        #print("---------GBlocks size",self.GBlocks.children)
         self.to_rgb = nn.Sequential(
             nn.LeakyReLU(0.2,inplace=True),
             nn.Conv2d(out_ch, ch_size, 3, 1, 1),
             nn.Tanh(),
             )
 
-    def forward(self, noise, c, mask): # x=noise, c=ent_emb mask new added
+    def forward(self, noise, c): # x=noise, c=ent_emb
         # concat noise and sentence
         out = self.fc(noise)
+        print("------value in c is ----->>",c.shape)
         out = out.view(noise.size(0), 8*self.ngf, 4, 4)
         cond = torch.cat((noise, c), dim=1)
-        
-        #here v can add attention to c its effect on the image quality
-       
-        self.att = SPATIAL_NET(ngf, self.ef_dim)  #new added
-        self.channel_att = CHANNEL_NET(ngf, self.ef_dim) #new added
-        
-         self.att.applyMask(mask)
-            
-         # fuse text and visual features
+        # fuse text and visual features
         for GBlock in self.GBlocks:
             out = GBlock(out, cond)
         # convert to RGB image
         out = self.to_rgb(out)
         return out
 
+################################################################################################################################
+
+################################################################################################################################
 
 # 定义鉴别器网络D
 class NetD(nn.Module):
@@ -86,7 +108,7 @@ class G_Block(nn.Module):
     def __init__(self, cond_dim, in_ch, out_ch, upsample):
         super(G_Block, self).__init__()
         print("------arguments passed to the g_block--cond_dim in_ch out_ch upsample", cond_dim, in_ch, out_ch, upsample)
-        self.upsample = upsamplecond_dim, in_ch, out_ch, upsample
+        self.upsample = upsample
         self.learnable_sc = in_ch != out_ch 
         self.c1 = nn.Conv2d(in_ch, out_ch, 3, 1, 1)
         self.c2 = nn.Conv2d(out_ch, out_ch, 3, 1, 1)
@@ -190,9 +212,13 @@ class Affine(nn.Module):
 
 
 def get_G_in_out_chs(nf, imsize):
+    print("in the get_G_in_out_chs function")
     layer_num = int(np.log2(imsize))-1
+    print("-------layer_num", layer_num)
     channel_nums = [nf*min(2**idx, 8) for idx in range(layer_num)]
     channel_nums = channel_nums[::-1]
+    print("------values in channel_nums", channel_nums[:-1])
+    print("------values in channel_nums", channel_nums[1:])
     in_out_pairs = zip(channel_nums[:-1], channel_nums[1:])
     return in_out_pairs
 
