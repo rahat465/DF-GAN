@@ -28,30 +28,73 @@ from models.inception import InceptionV3
 from torch.nn.functional import adaptive_avg_pool2d
 import torch.distributed as dist
 
+from torch.autograd import Variable
+
+#added to induce improvment through contrastive loss
+
+from lib.mask_correlated_samples import mask_correlated_samples
+from lib.contrastive_loss import NT_Xent
+
+def l2norm(X, dim, eps=1e-8):
+    """L2-normalize columns of X
+    """
+    norm = torch.pow(X, 2).sum(dim=dim, keepdim=True).sqrt() + eps
+    X = torch.div(X, norm)
+    return X
+
 
 ############   modules   ############
-def train(dataloader, netG, netD, netC, text_encoder, optimizerG, optimizerD, args):
+####-------image encoder added in parameters for getting the cnn code for images for contrastive losses
+def train(dataloader, netG, netD, netC, text_encoder, optimizerG, optimizerD, args,image_encoder):
     batch_size = args.batch_size
     device = args.device
     epoch = args.current_epoch
     max_epoch = args.max_epoch
+
+   
+       # added for contrastive loss
+    mask = mask_correlated_samples(args) # changed self to args to pass the batch_size
+    temperature = 0.5
+    #device = noise.get_device()
+    #device = args.device
+    criterion = NT_Xent(batch_size, temperature, mask, device)
+
     z_dim = args.z_dim
     netG, netD, netC = netG.train(), netD.train(), netC.train()
     if (args.multi_gpus==True) and (get_rank() != 0):
         None
     else:
         loop = tqdm(total=len(dataloader))
+    
+    D_total_loss = 0  #new dded
+    G_total_loss = 0   #new added
+
+
     for step, data in enumerate(dataloader, 0):
         # prepare_data
-        imgs, sent_emb, words_embs, keys = prepare_data(data, text_encoder)
+        imgs,imgs_2, sent_emb, words_embs, keys,sent_emb_2, words_embs_2, sort_ind, sort_ind_2= prepare_data(data, text_encoder)
+        #sort_ind, sort_ind_2 = prepare_data(data)#  --------sort_ind, sort_ind_2 in above line added to calculate the contrastive loss
         imgs = imgs.to(device).requires_grad_()
         sent_emb = sent_emb.to(device).requires_grad_()
         words_embs = words_embs.to(device).requires_grad_()
+
+        # added for 2nd Sentence
+        imgs_2 = imgs_2.to(device).requires_grad_()
+        sent_emb_2 = sent_emb_2.to(device).requires_grad_()
+        words_embs_2 = words_embs_2.to(device).requires_grad_()
+
         # predict real
         real_features = netD(imgs)
         pred_real, errD_real = predict_loss(netC, real_features, sent_emb, negtive=False)
         mis_features = torch.cat((real_features[1:], real_features[0:1]), dim=0)
         _, errD_mis = predict_loss(netC, mis_features, sent_emb, negtive=True)
+
+        # added for 2nd sentence
+        real_features_2 = netD(imgs_2)
+        pred_real_2, errD_real_2 = predict_loss(netC, real_features_2, sent_emb_2, negtive=False)
+        mis_features_2 = torch.cat((real_features_2[1:], real_features_2[0:1]), dim=0)
+        _, errD_mis_2 = predict_loss(netC, mis_features_2, sent_emb_2, negtive=True)   
+
         # synthesize fake images
         noise = torch.randn(batch_size, z_dim).to(device)
         fake = netG(noise, sent_emb)
@@ -61,15 +104,56 @@ def train(dataloader, netG, netD, netC, text_encoder, optimizerG, optimizerD, ar
         errD_MAGP = MA_GP(imgs, sent_emb, pred_real)
         # whole D loss
         errD = errD_real + (errD_fake + errD_mis)/2.0 + errD_MAGP
+
+
+        # synthesize fake images for second sentence
+        noise = torch.randn(batch_size, z_dim).to(device)
+        fake_2 = netG(noise, sent_emb_2)
+        fake_features_2 = netD(fake_2.detach())
+        _, errD_fake_2 = predict_loss(netC, fake_features_2, sent_emb_2, negtive=True)
+        # MA-GP
+        errD_MAGP_2 = MA_GP(imgs_2, sent_emb_2, pred_real_2)
+        # whole D loss
+        errD_2 = errD_real_2 + (errD_fake_2 + errD_mis_2)/2.0 + errD_MAGP_2
+              
+        errD += errD_2
+        
         # update D
         optimizerD.zero_grad()
         errD.backward()
         optimizerD.step()
         # update G
         fake_features = netD(fake)
+        _,cnn_code = image_encoder(fake)
         output = netC(fake_features, sent_emb)
+        
         # sim = MAP(image_encoder, fake, sent_emb).mean()
         errG = -output.mean()# - sim
+        _,cnn_code_2 = image_encoder(fake_2)
+        fake_features_2 = netD(fake_2)  # added for 2nd sentence
+        output_2 = netC(fake_features_2, sent_emb_2)
+        # sim = MAP(image_encoder, fake, sent_emb).mean()
+        errG_2 = -output_2.mean()# - sim
+
+        errG += errG_2
+
+        #added to add contrastive loss in the generator loss
+        _, ori_indices = torch.sort(sort_ind, 0)
+        _, ori_indices_2 = torch.sort(sort_ind_2, 0)
+
+        total_contra_loss = 0
+        i = -1
+        cnn_code = cnn_code[ori_indices]
+        cnn_code_2 = cnn_code_2[ori_indices_2]
+
+        cnn_code = l2norm(cnn_code, dim=1)
+        cnn_code_2 = l2norm(cnn_code_2, dim=1)
+
+        contrative_loss = criterion(cnn_code, cnn_code_2)
+        total_contra_loss += contrative_loss *  0.2
+  
+        errG  += total_contra_loss
+
         optimizerG.zero_grad()
         errG.backward()
         optimizerG.step()
@@ -84,69 +168,14 @@ def train(dataloader, netG, netD, netC, text_encoder, optimizerG, optimizerD, ar
         None
     else:
         loop.close()
-################################################################################################################
-def train_new(dataloader, netG, netD, netC, text_encoder, optimizerG, optimizerD, args):
-    batch_size = args.batch_size
-    device = args.device
-    epoch = args.current_epoch
-    max_epoch = args.max_epoch
-    z_dim = args.z_dim
-    netG, netD, netC = netG.train(), netD.train(), netC.train()
-    if (args.multi_gpus==True) and (get_rank() != 0):
-        None
-    else:
-        loop = tqdm(total=len(dataloader))
-    for step, data in enumerate(dataloader, 0):
-        # prepare_data
-        imgs, sent_emb, words_embs, keys = prepare_data(data, text_encoder)
-        imgs = imgs.to(device).requires_grad_()
-        sent_emb = sent_emb.to(device).requires_grad_()
-        words_embs = words_embs.to(device).requires_grad_()
-        # predict real
-        real_features = netD(imgs)
-        pred_real, errD_real = predict_loss(netC, real_features, sent_emb, negtive=False)
-        mis_features = torch.cat((real_features[1:], real_features[0:1]), dim=0)
-        _, errD_mis = predict_loss(netC, mis_features, sent_emb, negtive=True)
-        # synthesize fake images
-        noise = torch.randn(batch_size, z_dim).to(device)
-        fake = netG(noise, sent_emb)
-        fake_features = netD(fake.detach())
-        _, errD_fake = predict_loss(netC, fake_features, sent_emb, negtive=True)
-        # MA-GP
-        errD_MAGP = MA_GP(imgs, sent_emb, pred_real)
-        # whole D loss
-        errD = errD_real + (errD_fake + errD_mis)/2.0 + errD_MAGP
-        # update D
-        optimizerD.zero_grad()
-        errD.backward()
-        optimizerD.step()
-        # update G
-        fake_features = netD(fake)
-        output = netC(fake_features, sent_emb)
-        # sim = MAP(image_encoder, fake, sent_emb).mean()
-        errG = -output.mean()# - sim
-        optimizerG.zero_grad()
-        errG.backward()
-        optimizerG.step()
-        # update loop information
-        if (args.multi_gpus==True) and (get_rank() != 0):
-            None
-        else:
-            loop.update(1)
-            loop.set_description(f'Training Epoch [{epoch}/{max_epoch}]')
-            loop.set_postfix()
-    if (args.multi_gpus==True) and (get_rank() != 0):
-        None
-    else:
-        loop.close()
-########################################################################################################################################
+
 
 def sample(dataloader, netG, text_encoder, save_dir, device, multi_gpus, z_dim, stamp, truncation, trunc_rate):
     for step, data in enumerate(dataloader, 0):
         ######################################################
         # (1) Prepare_data
         ######################################################
-        imgs, sent_emb, words_embs, keys = prepare_data(data, text_encoder)
+        imgs,imgs_2, sent_emb, words_embs, keys, sent_emb_2, words_embs_2, sort_ind, sort_ind_2 = prepare_data(data, text_encoder)
         sent_emb = sent_emb.to(device)
         ######################################################
         # (2) Generate fake images
@@ -218,7 +247,7 @@ def calculate_fid(dataloader, text_encoder, netG, device, m1, s1, epoch, max_epo
             ######################################################
             # (1) Prepare_data
             ######################################################
-            imgs, sent_emb, words_embs, keys = prepare_data(data, text_encoder)
+            imgs,imgs_2, sent_emb, words_embs, keys, sent_emb_2, words_embs_2, sort_ind, sort_ind_2 = prepare_data(data, text_encoder)
             sent_emb = sent_emb.to(device)
             ######################################################
             # (2) Generate fake images
