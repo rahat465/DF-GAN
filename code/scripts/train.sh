@@ -9,7 +9,7 @@ stamp=normal
 train=True
 
 # resume training
-resume_epoch=1
+resume_epoch=9
 resume_model_path=./saved_models/bird/base_z_dim100_bird_256_2022_06_04_23_20_33/
 
 # DDP settings
