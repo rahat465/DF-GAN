@@ -22,7 +22,7 @@ ROOT_PATH = osp.abspath(osp.join(osp.dirname(osp.abspath(__file__)),  ".."))
 sys.path.insert(0, ROOT_PATH)
 from lib.utils import mkdir_p, get_rank, merge_args_yaml, get_time_stamp, load_netG
 from lib.utils import tokenize, truncated_noise, prepare_sample_data
-from lib.perpare import prepare_models
+from lib.perpare import prepare_models, prepare_models_new
 
 
 def parse_args():
@@ -40,7 +40,7 @@ def parse_args():
                         help='if training')
     parser.add_argument('--multi_gpus', type=bool, default=False,
                         help='if use multi-gpu')
-    parser.add_argument('--gpu_id', type=int, default=2,
+    parser.add_argument('--gpu_id', type=int, default=1,
                         help='gpu id')
     parser.add_argument('--local_rank', default=-1, type=int,
         help='node rank for distributed training')
@@ -68,6 +68,7 @@ def sample_example(wordtoix, netG, text_encoder, args):
     truncation, trunc_rate = args.truncation, args.trunc_rate
     z_dim = args.z_dim
     captions, cap_lens, _ = tokenize(wordtoix, text_filepath)
+    print("==========================>>-----In the---- sample---->>---sample_example---- text encoder",text_encoder)
     sent_embs, _  = prepare_sample_data(captions, cap_lens, text_encoder, device)
     caption_num = sent_embs.size(0)
     # get noise
@@ -100,7 +101,9 @@ def main(args):
     args.vocab_size, wordtoix = build_word_dict(pickle_path)
     # prepare models
     print('------------------>>---',args)
-    _, text_encoder, netG, _, _ = prepare_models(args)
+    # commenting a line to check bert encoder
+    #_, text_encoder, netG, _, _ = prepare_models(args)
+    _, text_encoder, netG, _, _ = prepare_models_new(args)
     model_path = osp.join(ROOT_PATH, args.checkpoint)
     netG = load_netG(netG, model_path, args.multi_gpus, train=False)
     netG.eval()
@@ -108,9 +111,9 @@ def main(args):
         None
     else:
         print('Load %s for NetG'%(args.checkpoint))
-        #it is loading df GAN
         print("************ Start sampling ************")
     start_t = time.time()
+    print("---------sample_example function call from main")
     sample_example(wordtoix, netG, text_encoder, args)
     end_t = time.time()
     if (args.multi_gpus==True) and (get_rank() != 0):
