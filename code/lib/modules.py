@@ -291,6 +291,8 @@ def eval(dataloader, text_encoder, netG, device, m1, s1, save_imgs, save_dir,
                 times, z_dim, batch_size, truncation=True, trunc_rate=0.86):
     """ Calculates the FID """
     # prepare Inception V3
+    total_is_score = 0.0
+    avg_is_score = 0.0
     dims = 2048
     block_idx = InceptionV3.BLOCK_INDEX_BY_DIM[dims]
     model = InceptionV3([block_idx])
@@ -303,6 +305,7 @@ def eval(dataloader, text_encoder, netG, device, m1, s1, save_imgs, save_dir,
         ])
     n_gpu = dist.get_world_size()
     dl_length = dataloader.__len__()
+    print("The length of the dataloader is -------",dl_length)
     imgs_num = dl_length * n_gpu * batch_size * times
     pred_arr = np.empty((imgs_num, dims))
     if (n_gpu!=1) and (get_rank() != 0):
@@ -316,7 +319,8 @@ def eval(dataloader, text_encoder, netG, device, m1, s1, save_imgs, save_dir,
             ######################################################
             # (1) Prepare_data
             ######################################################
-            imgs, sent_emb, words_embs, keys = prepare_data(data, text_encoder)
+            #imgs, sent_emb, words_embs, keys = prepare_data(data, text_encoder)
+            imgs,imgs_2, sent_emb, words_embs, keys, sent_emb_2, words_embs_2, sort_ind, sort_ind_2 = prepare_data(data, text_encoder)
             sent_emb = sent_emb.to(device)
             ######################################################
             # (2) Generate fake images
@@ -330,6 +334,11 @@ def eval(dataloader, text_encoder, netG, device, m1, s1, save_imgs, save_dir,
                 else:
                     noise = torch.randn(batch_size, z_dim).to(device)
                 fake_imgs = netG(noise,sent_emb)
+               #genrated_imgs += fake_imgs
+               # print("--------size of generated images array -----", len(genrated_imgs))
+                is_score = inception_score(fake_imgs, cuda=True, batch_size=15, resize=True, splits=1)
+                print("-------inception score------->",is_score)
+                total_is_score = total_is_score + is_score[0]
                 if save_imgs==True:
                     save_single_imgs(fake_imgs, save_dir, time, dl_length, i, batch_size)
                 fake = norm(fake_imgs)
@@ -355,8 +364,71 @@ def eval(dataloader, text_encoder, netG, device, m1, s1, save_imgs, save_dir,
     m2 = np.mean(pred_arr, axis=0)
     s2 = np.cov(pred_arr, rowvar=False)
     fid_value = calculate_frechet_distance(m1, s1, m2, s2)
+    avg_is_score = total_is_score / 1950
+    print("average IS value for the baches is-----",avg_is_score)
     return fid_value
+#function added for IS 
+from torch.autograd import Variable
+from torchvision.models.inception import inception_v3
+from scipy.stats import entropy
 
+def inception_score(imgs, cuda=True, batch_size=15, resize=True, splits=1):
+    """Computes the inception score of the generated images imgs
+
+    imgs -- Torch dataset of (3xHxW) numpy images normalized in the range [-1, 1]
+    cuda -- whether or not to run on GPU
+    batch_size -- batch size for feeding into Inception v3
+    splits -- number of splits
+    """
+    N = len(imgs)
+    print("---------value in N", N)
+    assert batch_size > 0
+    #assert N > batch_size
+
+    # Set up dtype
+    if cuda:
+        dtype = torch.cuda.FloatTensor
+    else:
+        if torch.cuda.is_available():
+            print("WARNING: You have a CUDA device, so you should probably set cuda=True")
+        dtype = torch.FloatTensor
+
+    # Set up dataloader
+    dataloader = torch.utils.data.DataLoader(imgs, batch_size=batch_size)
+
+    # Load inception model
+    inception_model = inception_v3(pretrained=True, transform_input=False).type(dtype)
+    inception_model.eval();
+    up = nn.Upsample(size=(299, 299), mode='bilinear').type(dtype)
+    def get_pred(x):
+        if resize:
+            x = up(x)
+        x = inception_model(x)
+        return F.softmax(x).data.cpu().numpy()
+
+    # Get predictions
+    preds = np.zeros((N, 1000))
+
+    for i, batch in enumerate(dataloader, 0):
+        batch = batch.type(dtype)
+        batchv = Variable(batch)
+        batch_size_i = batch.size()[0]
+
+        preds[i*batch_size:i*batch_size + batch_size_i] = get_pred(batchv)
+
+    # Now compute the mean kl-div
+    split_scores = []
+
+    for k in range(splits):
+        part = preds[k * (N // splits): (k+1) * (N // splits), :]
+        py = np.mean(part, axis=0)
+        scores = []
+        for i in range(part.shape[0]):
+            pyx = part[i, :]
+            scores.append(entropy(pyx, py))
+        split_scores.append(np.exp(np.mean(scores)))
+
+    return np.mean(split_scores), np.std(split_scores)
 
 def save_single_imgs(imgs, save_dir, time, dl_len, batch_n, batch_size):
     for j in range(batch_size):
