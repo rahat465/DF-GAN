@@ -19,7 +19,7 @@ ROOT_PATH = osp.abspath(osp.join(osp.dirname(osp.abspath(__file__)),  ".."))
 sys.path.insert(0, ROOT_PATH)
 from lib.utils import mkdir_p,get_rank,merge_args_yaml,get_time_stamp
 from lib.utils import load_netG,load_npz
-from lib.perpare import prepare_dataloaders,prepare_models
+from lib.perpare import prepare_dataloaders,prepare_models , prepare_models_new
 from lib.modules import eval
 
 def parse_args():
@@ -29,7 +29,7 @@ def parse_args():
                         help='optional config file')
     parser.add_argument('--num_workers', type=int, default=4,
                         help='number of workers(default: 4)')
-    parser.add_argument('--batch_size', type=int, default=32,
+    parser.add_argument('--batch_size', type=int, default=15,
                         help='batch size')
     parser.add_argument('--train', type=bool, default=False,
                         help='if train model')
@@ -59,7 +59,9 @@ def main(args):
     train_dl, valid_dl ,train_ds, valid_ds, _ = prepare_dataloaders(args)
     args.vocab_size = train_ds.n_words
     # prepare models
-    _, text_encoder, netG, _, _ = prepare_models(args)
+    # commenting a line to check bert encoder
+    #_, text_encoder, netG, _, _ = prepare_models(args)
+    _, text_encoder, netG, _, _ = prepare_models_new(args)
     model_path = osp.join(ROOT_PATH, args.checkpoint)
     netG = load_netG(netG, model_path, multi_gpus, train=False)
     netG.eval()
